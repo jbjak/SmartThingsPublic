@@ -74,12 +74,6 @@ def parse(String description) {
     log.debug "description is $description"
     def event = zigbee.getEvent(description)
     if (event) {
-        // Temporary fix for the case when Device is OFFLINE and is connected again
-        if (state.lastActivity == null){
-            state.lastActivity = now()
-            sendEvent(name: "deviceWatch-lastActivity", value: state.lastActivity, description: "Last Activity is on ${new Date((long)state.lastActivity)}", displayed: false, isStateChange: true)
-        }
-        state.lastActivity = now()
         if (event.name=="level" && event.value==0) {}
         else {
             if (event.name=="colorTemperature") {
@@ -89,8 +83,21 @@ def parse(String description) {
         }
     }
     else {
-        log.warn "DID NOT PARSE MESSAGE for description : $description"
-        log.debug zigbee.parseDescriptionAsMap(description)
+        def cluster = zigbee.parse(description)
+
+        if (cluster && cluster.clusterId == 0x0006 && cluster.command == 0x07) {
+            if (cluster.data[0] == 0x00) {
+                log.debug "ON/OFF REPORTING CONFIG RESPONSE: " + cluster
+                sendEvent(name: "checkInterval", value: 60 * 12, displayed: false, data: [protocol: "zigbee", hubHardwareId: device.hub.hardwareID])
+            }
+            else {
+                log.warn "ON/OFF REPORTING CONFIG FAILED- error code:${cluster.data[0]}"
+            }
+        }
+        else {
+            log.warn "DID NOT PARSE MESSAGE for description : $description"
+            log.debug "${cluster}"
+        }
     }
 }
 
@@ -110,26 +117,21 @@ def setLevel(value) {
  * PING is used by Device-Watch in attempt to reach the Device
  * */
 def ping() {
-
-    if (state.lastActivity < (now() - (1000 * device.currentValue("checkInterval"))) ){
-        log.info "ping, alive=no, lastActivity=${state.lastActivity}"
-        state.lastActivity = null
-        return zigbee.onOffRefresh()
-    } else {
-        log.info "ping, alive=yes, lastActivity=${state.lastActivity}"
-        sendEvent(name: "deviceWatch-lastActivity", value: state.lastActivity, description: "Last Activity is on ${new Date((long)state.lastActivity)}", displayed: false, isStateChange: true)
-    }
+    return zigbee.onOffRefresh()
 }
 
 def refresh() {
-    zigbee.onOffRefresh() + zigbee.levelRefresh() + zigbee.colorTemperatureRefresh() + zigbee.onOffConfig() + zigbee.levelConfig() + zigbee.colorTemperatureConfig()
+    zigbee.onOffRefresh() + zigbee.levelRefresh() + zigbee.colorTemperatureRefresh() + zigbee.onOffConfig(0, 300) + zigbee.levelConfig() + zigbee.colorTemperatureConfig()
 }
 
 def configure() {
     log.debug "Configuring Reporting and Bindings."
-    // Enrolls device to Device-Watch with 3 x Reporting interval 30min
-    sendEvent(name: "checkInterval", value: 1800, displayed: false, data: [protocol: "zigbee"])
-    zigbee.onOffConfig() + zigbee.levelConfig() + zigbee.colorTemperatureConfig() + zigbee.onOffRefresh() + zigbee.levelRefresh() + zigbee.colorTemperatureRefresh()
+    // Device-Watch allows 3 check-in misses from device (plus 1 min lag time)
+    // enrolls with default periodic reporting until newer 5 min interval is confirmed
+    sendEvent(name: "checkInterval", value: 3 * 60 * 60 + 1 * 60, displayed: false, data: [protocol: "zigbee", hubHardwareId: device.hub.hardwareID])
+
+    // OnOff minReportTime 0 seconds, maxReportTime 5 min. Reporting interval if no activity
+    zigbee.onOffConfig(0, 300) + zigbee.levelConfig() + zigbee.colorTemperatureConfig() + zigbee.onOffRefresh() + zigbee.levelRefresh() + zigbee.colorTemperatureRefresh()
 }
 
 def setColorTemperature(value) {
