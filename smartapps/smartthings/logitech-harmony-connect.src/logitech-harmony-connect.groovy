@@ -24,6 +24,12 @@
  *  switches             | switch            | on, off                     | on, off
  *  motionSensors        | motion            |                             | active, inactive
  *  contactSensors       | contact           |                             | open, closed
+ *  thermostat           | thermostat        | setHeatingSetpoint,         | temperature, heatingSetpoint
+ *                       |                   | setCoolingSetpoint(number)  | coolingSetpoint, thermostatSetpoint
+ *                       |                   | off, heat, emergencyHeat    | thermostatMode — ["emergency heat", "auto", "cool", "off", "heat"]
+ *                       |                   | cool, setThermostatMode     | thermostatFanMode — ["auto", "on", "circulate"]
+ *                       |                   | fanOn, fanAuto, fanCirculate| thermostatOperatingState — ["cooling", "heating", "pending heat",
+ *                       |                   | setThermostatFanMode, auto  | "fan only", "vent economizer", "pending cool", "idle"]
  *  presenceSensors      | presence          |                             | present, 'not present'
  *  temperatureSensors   | temperature       |                             | <numeric, F or C according to unit>
  *  accelerationSensors  | acceleration      |                             | active, inactive
@@ -58,6 +64,7 @@ preferences(oauthPage: "deviceAuthorization") {
 			input "switches", "capability.switch", title: "Which Switches?", multiple: true, required: false
 			input "motionSensors", "capability.motionSensor", title: "Which Motion Sensors?", multiple: true, required: false
 			input "contactSensors", "capability.contactSensor", title: "Which Contact Sensors?", multiple: true, required: false
+      input "thermostats", "capability.thermostat", title: "Which Thermostats?", multiple: true, required: false
 			input "presenceSensors", "capability.presenceSensor", title: "Which Presence Sensors?", multiple: true, required: false
 			input "temperatureSensors", "capability.temperatureMeasurement", title: "Which Temperature Sensors?", multiple: true, required: false
 			input "accelerationSensors", "capability.accelerationSensor", title: "Which Vibration Sensors?", multiple: true, required: false
@@ -504,12 +511,16 @@ def pollResponse(response, data) {
 			if (ResponseValues) {
         def map = [:]
         ResponseValues.hubs.each {
+        // Device-Watch relies on the Logitech Harmony Cloud to get the Device state.
+        def isAlive = it.value.status
+        def d = getChildDevice("harmony-${it.key}")
+        d?.sendEvent(name: "DeviceWatch-DeviceStatus", value: isAlive!=504? "online":"offline", displayed: false, isStateChange: true)
         if (it.value.message == "OK") {
               map["${it.key}"] = "${it.value.response.data.currentAvActivity},${it.value.response.data.activityStatus}"
               def hub = getChildDevice("harmony-${it.key}")
               if (hub) {
                   if (it.value.response.data.currentAvActivity == "-1") {
-                      hub.sendEvent(name: "currentActivity", value: "--", descriptionText: "There isn't any activity running", display: false)
+                      hub.sendEvent(name: "currentActivity", value: "--", descriptionText: "There isn't any activity running", displayed: false)
                   } else {
                       def currentActivity
                       def activityDTH = getChildDevice("harmony-${it.key}-${it.value.response.data.currentAvActivity}")
@@ -517,7 +528,7 @@ def pollResponse(response, data) {
                         currentActivity = activityDTH.device.displayName
                       else
                         currentActivity = getActivityName(it.value.response.data.currentAvActivity,it.key)
-                      hub.sendEvent(name: "currentActivity", value: currentActivity, descriptionText: "Current activity is ${currentActivity}", display: false)
+                      hub.sendEvent(name: "currentActivity", value: currentActivity, descriptionText: "Current activity is ${currentActivity}", displayed: false)
                   }
               }
           } else {
@@ -569,7 +580,7 @@ def getActivityList() {
                             }
                             activities += [id: "off", name: "Activity OFF", type: "0"]
                         }
-                        hub.sendEvent(name: "activities", value: new groovy.json.JsonBuilder(activities).toString(), descriptionText: "Activities are ${activities.collect { it.name }?.join(', ')}", display: false)
+                        hub.sendEvent(name: "activities", value: new groovy.json.JsonBuilder(activities).toString(), descriptionText: "Activities are ${activities.collect { it.name }?.join(', ')}", displayed: false)
 					          }
                 }
             }
@@ -936,7 +947,7 @@ def deleteHarmony() {
 }
 
 private getAllDevices() {
-	([] + switches + motionSensors + contactSensors + presenceSensors + temperatureSensors + accelerationSensors + waterSensors + lightSensors + humiditySensors + alarms + locks)?.findAll()?.unique { it.id }
+	([] + switches + motionSensors + contactSensors + thermostats + presenceSensors + temperatureSensors + accelerationSensors + waterSensors + lightSensors + humiditySensors + alarms + locks)?.findAll()?.unique { it.id }
 }
 
 private deviceItem(device) {
